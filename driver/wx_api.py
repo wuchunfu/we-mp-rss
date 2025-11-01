@@ -3,7 +3,6 @@
 基于 https://github.com/wechat-article/wechat-article-exporter 项目实现
 提供二维码登录、token管理、cookie管理等功能
 """
-
 import os
 import time
 import json
@@ -14,8 +13,8 @@ from threading import Lock, Timer
 from PIL import Image
 import qrcode
 from io import BytesIO
+from .token import get as get_token,set_token
 import logging
-
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,11 +27,12 @@ class WeChatAPI:
         self.base_url = "https://mp.weixin.qq.com"
         self.login_url = f"{self.base_url}/"
         self.home_url = f"{self.base_url}/cgi-bin/home"
-        
         # 状态管理
         self.is_logged_in = False
+        self.fingerprint = self._generate_uuid()
         self.session = requests.Session()
         self.token = None
+        self.cookies_dict=[]
         self.cookies = {}
         self.qr_code_path = "static/wx_qrcode.png"
         
@@ -57,7 +57,7 @@ class WeChatAPI:
             'Upgrade-Insecure-Requests': '1',
             'Referer': 'https://mp.weixin.qq.com/'
         })
-
+     
     def get_qr_code(self, callback: Optional[Callable] = None, notice: Optional[Callable] = None) -> Dict[str, Any]:
         """
         获取登录二维码
@@ -69,6 +69,7 @@ class WeChatAPI:
         Returns:
             包含二维码信息的字典
         """
+        self.__init__()
         with self._lock:
             self.login_callback = callback
             self.notice_callback = notice
@@ -380,7 +381,8 @@ class WeChatAPI:
                     
             except Exception as e:
                 logger.error(f"检查登录状态失败: {str(e)}")
-                Timer(5.0, check_login).start()  # 出错后延长检查间隔
+                self.notice_callback('检查登录状态失败,请重试')
+                # Timer(5.0, check_login).start()  # 出错后延长检查间隔
         
         # 启动检查
         Timer(2.0, check_login).start()
@@ -397,10 +399,10 @@ class WeChatAPI:
         """
         try:
             check_url=f"{self.base_url}/cgi-bin/scanloginqrcode"
-            fingerprint=self.cookies.get("fingerprint")
+            self.fingerprint=self.cookies.get("fingerprint")
             params = {
                 "action": "ask",
-                "fingerprint": fingerprint,
+                "fingerprint": self.fingerprint,
                 "lang": "zh_CN",
                 "f": "json",
                 "ajax": 1
@@ -417,7 +419,8 @@ class WeChatAPI:
                 if "invalid session" in str(data):
                     return 'invalid session'
                 if status == 1:
-                    self.cookies=dict(self.session.cookies)
+                    with self._lock:
+                        self.cookies = requests.utils.dict_from_cookiejar(self.session.cookies) if self.session.cookies else {}
                     return 'success'  # 登录成功
                 elif status == 2:
                     return 'scanned'  # 已扫描
@@ -449,7 +452,7 @@ class WeChatAPI:
                 # 调用成功回调
                 if self.login_callback:
                     login_data = {
-                        'cookies': dict(self.session.cookies),
+                        'cookies': self.cookies,
                         'cookies_str': self._format_cookies_string(),
                         'token': self.token,
                         'wx_login_url': self.qr_code_path,
@@ -461,6 +464,7 @@ class WeChatAPI:
                 
         except Exception as e:
             logger.error(f"处理登录成功失败: {str(e)}")
+            raise e
 
     def _extract_login_info(self):
         """
@@ -468,21 +472,71 @@ class WeChatAPI:
         """
         try:
             # 访问首页获取token
-            response = self.session.get(self.home_url)
-            response.raise_for_status()
+            # https://mp.weixin.qq.com/cgi-bin/loginpage?url=%2Fcgi-bin%2Fhome
+            # https://mp.weixin.qq.com/cgi-bin/bizlogin?action=login
             
+            # 执行登录POST请求
+            login_data = {
+                "userlang": "zh_CN",
+                "redirect_url": "",
+                "cookie_forbidden": "0",
+                "cookie_cleaned": "0", 
+                "plugin_used": "0",
+                "login_type": "3",
+                "fingerprint": self.fingerprint,
+                "token": "",
+                "lang": "zh_CN",
+                "f": "json",
+                "ajax": "1"
+            }
+            
+            # 发送登录请求
+            response = self.session.post(
+                "https://mp.weixin.qq.com/cgi-bin/bizlogin?action=login",
+                data=login_data
+            )
+            
+
+            response.raise_for_status()
+            self.cookies = requests.utils.dict_from_cookiejar(self.session.cookies) if self.session.cookies else {}
+            print(self.cookies)
             # 从URL或页面内容中提取token
             import re
             token_match = re.search(r'token=([^&\s"\']+)', response.text)
             if token_match:
                 self.token = token_match.group(1)
             
-            # 更新cookies
-            self.cookies = dict(self.session.cookies)
             
         except Exception as e:
             logger.error(f"提取登录信息失败: {str(e)}")
 
+    def _cookie_string_to_dict(self,cookie_string: str) -> Dict[str, str]:
+        """
+        将cookie字符串转换为字典格式
+        """
+        cookie_dict = {}
+        
+        if not cookie_string or not isinstance(cookie_string, str):
+            return cookie_dict
+        
+        # 按分号分割cookie字符串
+        cookie_pairs = cookie_string.split(';')
+        
+        for pair in cookie_pairs:
+            # 去除首尾空格
+            pair = pair.strip()
+            if not pair:
+                continue
+                
+            # 按等号分割键值对
+            if '=' in pair:
+                key, value = pair.split('=', 1)  # 只分割第一个等号
+                cookie_dict[key.strip()] = value.strip()
+            else:
+                # 如果没有等号，将整个字符串作为key，值为空字符串
+                cookie_dict[pair] = ""
+        
+        return cookie_dict
     def _format_cookies_string(self) -> str:
         """
         格式化cookies为字符串
@@ -511,7 +565,19 @@ class WeChatAPI:
         except Exception as e:
             logger.error(f"计算过期时间失败: {str(e)}")
             return None
-
+    def get_cookie_expires(self,cookies: any):
+        try:
+            cookie_info = []
+            for cookie in cookies:
+                if cookie.expires is not None:
+                    cookie_info.append((cookie.name, cookie.value, cookie.expires))
+                else:
+                    cookie_info.append((cookie.name, cookie.value, "No expires attribute"))
+            return cookie_info
+        except requests.exceptions.RequestException as e:
+            logger.error(f"获取cookie过期时间失败: {str(e)}")   
+            return f"An error occurred: {e}"
+        
     def _get_account_info(self) -> Optional[Dict[str, Any]]:
         """
         获取账号信息
@@ -523,22 +589,93 @@ class WeChatAPI:
             # 这里需要根据实际页面结构获取账号信息
             response = self.session.get(self.home_url)
             response.raise_for_status()
-            
+            account_list=self._get_account_list()
+
+            if account_list is None:
+                logger.error("获取账号列表失败")
+                return None
+            # 提取 biz_list 的第一项数据
+            biz_list=account_list['biz_list']['list']
+            first_biz_item = biz_list[0] if len(biz_list) > 0 else None
+
+            print(first_biz_item)
             # 解析账号信息（需要根据实际页面结构调整）
             account_info = {
                 'wx_app_name': '公众号名称',
                 'wx_logo': '',
-                'wx_read_yesterday': '0',
-                'wx_share_yesterday': '0',
-                'wx_watch_yesterday': '0',
-                'wx_yuan_count': '0',
-                'wx_user_count': '0'
+                'wx_read_yesterday': 0,
+                'wx_share_yesterday': 0,
+                'wx_watch_yesterday': 0,
+                'wx_yuan_count': 0,
+                'wx_user_count': 0
             }
             
             return account_info
             
         except Exception as e:
             logger.error(f"获取账号信息失败: {str(e)}")
+            return None
+
+    def _get_account_list(self) -> Optional[Dict[str, Any]]:
+        """
+        获取账号列表
+        
+        Args:
+            fingerprint: 指纹参数
+            
+        Returns:
+            账号列表信息字典
+        """
+        try:
+            if not self.token:
+                logger.error("未获取到token，无法获取账号列表")
+                return None
+                
+            # 构建请求URL
+            url = f"{self.base_url}/cgi-bin/switchacct"
+            
+            # 设置请求参数
+            params = {
+                'action': 'get_acct_list',
+                'fingerprint': self.fingerprint,
+                'token': self.token,
+                'lang': 'zh_CN',
+                'f': 'json',
+                'ajax': '1'
+            }
+            
+            # 设置请求头
+            headers = {
+                'accept': '*/*',
+                'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                'sec-ch-ua': '"Not?A_Brand";v="99", "Chromium";v="130"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
+                'sec-fetch-dest': 'empty',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-site': 'same-origin',
+                'x-requested-with': 'XMLHttpRequest'
+            }
+            
+            # 设置referrer
+            referrer = f"{self.base_url}/cgi-bin/home?t=home/index&lang=zh_CN&token={self.token}"
+            headers['referer'] = referrer
+            
+            # 发送GET请求
+            response = self.session.get(url, params=params, headers=headers)
+            response.raise_for_status()
+            self.cookies_dict=self.get_cookie_expires(response.cookies)
+            # 解析JSON响应
+            result = response.json()
+            if 'base_resp' in result and result['base_resp']['ret'] == 0:
+                logger.info(f"获取账号列表成功: {result}")
+                return result
+            else:
+                logger.warning(f"获取账号列表失败: {result['base_resp']}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"获取账号列表失败: {str(e)}")
             return None
 
     def _clean_qr_code(self):
@@ -574,9 +711,29 @@ class WeChatAPI:
                 response = self.session.get(f"{self.home_url}?token={token}")
                 response.raise_for_status()
                 
+               
                 if 'home' in response.url:
                     self.is_logged_in = True
-                    logger.info("Token登录成功")
+                      # 调用成功回调
+                    if self.login_callback:
+                        from driver.cookies import expire
+                        ext_data=self._get_account_info()
+                        if ext_data is None:
+                            logger.warning("Token登录失败")
+                            return False
+                        login_data = {
+                            'cookies': self.cookies,
+                            'cookies_str': self._format_cookies_string(),
+                            'token': self.token,
+                            'wx_login_url': self.qr_code_path,
+                            'expiry': {
+                                "expiry_time":expire(self.cookies_dict),
+                                "expiry_time_stamp":expire(self.cookies_dict)
+                            }
+                        }
+                        set_token(login_data,ext_data)
+                        self.login_callback(login_data, ext_data)
+                        logger.info("Token登录成功")
                     return True
                 else:
                     logger.warning("Token登录失败")
@@ -584,6 +741,7 @@ class WeChatAPI:
                     
         except Exception as e:
             logger.error(f"Token登录失败: {str(e)}")
+            raise e
             return False
 
     def logout(self):
@@ -631,7 +789,7 @@ class WeChatAPI:
 
 
 # 创建全局实例
-wechat_api = WeChatAPI()
+WeChat_api = WeChatAPI()
 
 
 def get_qr_code(callback: Optional[Callable] = None, notice: Optional[Callable] = None) -> Dict[str, Any]:
@@ -645,10 +803,14 @@ def get_qr_code(callback: Optional[Callable] = None, notice: Optional[Callable] 
     Returns:
         二维码信息字典
     """
-    return wechat_api.get_qr_code(callback, notice)
+    return WeChat_api.get_qr_code(callback, notice)
 
 
-def login_with_token(token: str, cookies: Optional[Dict[str, str]] = None) -> bool:
+
+def _cookie_string_to_dict(cookie_string: str) -> Dict[str, str]:
+    return WeChat_api._cookie_string_to_dict(cookie_string)
+
+def login_with_token(login_callback: Optional[Callable] = None) -> bool:
     """
     使用token登录（全局函数）
     
@@ -659,7 +821,14 @@ def login_with_token(token: str, cookies: Optional[Dict[str, str]] = None) -> bo
     Returns:
         是否登录成功
     """
-    return wechat_api.login_with_token(token, cookies)
+    token=get_token("token")
+    cookies=get_token("cookie")
+    cookies=_cookie_string_to_dict(cookies)
+    
+    print(f"token: {token}")
+    # print(f"cookies: {cookies}")
+    WeChat_api.login_callback=login_callback
+    return WeChat_api.login_with_token(token, cookies)
 
 
 def get_session_info() -> Dict[str, Any]:
@@ -669,14 +838,15 @@ def get_session_info() -> Dict[str, Any]:
     Returns:
         会话信息字典
     """
-    return wechat_api.get_session_info()
+    return WeChat_api.get_session_info()
 
 
 def logout():
     """
     登出（全局函数）
     """
-    wechat_api.logout()
+    WeChat_api.logout()
+
 
 
 if __name__ == "__main__":
@@ -689,14 +859,15 @@ if __name__ == "__main__":
     def notice_callback(message):
         print(f"通知: {message}")
     
-    # 获取二维码
-    result = get_qr_code(login_success_callback, notice_callback)
-    print(f"二维码结果: {result}")
+   
     
     # 保持程序运行以等待登录
     try:
-        while True:
-            time.sleep(1)
+         # 获取二维码
+        result = get_qr_code(login_success_callback, notice_callback)
+        print(f"二维码结果: {result}")
+        # while True:
+        #     time.sleep(1)
     except KeyboardInterrupt:
         print("程序退出")
         logout()

@@ -14,6 +14,24 @@ def testWeb():
     Web.FixArticle(mp_id="MP_WXS_3009671561",urls=urls)
     pass
  
+def testWx_Api():
+      # 测试代码
+    def login_success_callback(session_data, account_info):
+        print("登录成功！")
+        print(f"Token: {session_data.get('token')}")
+        print(f"账号信息: {account_info}")
+    
+    def notice_callback(message):
+        print(f"通知: {message}")
+    
+    from driver.wx_api import get_qr_code,login_with_token
+    # 保持程序运行以等待登录
+    # 使用token登录
+    login_with_token(login_success_callback)
+    # 获取二维码
+    result = get_qr_code(login_success_callback, notice_callback)
+    # print(f"二维码结果: {result}")
+
 
 def testMarkDown():
     from core.models import Article
@@ -57,7 +75,8 @@ def testNotice():
 if __name__=="__main__":
     # testLogin()
     # testWeb()
-    testNotice()
+    # testNotice()
+    testWx_Api()
     # testMd2Doc()
     # testToken()
     # testMarkDown()

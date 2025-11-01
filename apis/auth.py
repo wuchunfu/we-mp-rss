@@ -13,7 +13,7 @@ from driver.wx import WX_API
 from core.config import set_config, cfg
 router = APIRouter(prefix=f"/auth", tags=["认证"])
 from driver.success import Success
-
+from driver.wx_api import get_qr_code #通过API登录
 def ApiSuccess(data):
     if data != None:
             print("\n登录结果:")
@@ -24,6 +24,7 @@ def ApiSuccess(data):
             print("\n登录失败，请检查上述错误信息")
 @router.get("/qr/code", summary="获取登录二维码")
 async def get_qrcode(current_user=Depends(get_current_user)):
+
     code_url=WX_API.GetCode(Success)
     return success_response(code_url)
 @router.get("/qr/image", summary="获取登录二维码图片")

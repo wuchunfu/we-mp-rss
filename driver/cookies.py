@@ -1,6 +1,6 @@
 import time
 def expire(cookies:any) :
-    if not isinstance(cookies, list):
+    if not isinstance(cookies, list) and  not isinstance(cookies, dict):
         raise TypeError("cookies参数必须是列表类型")
     
     cookie_expiry=None
