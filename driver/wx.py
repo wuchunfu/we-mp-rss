@@ -1,11 +1,7 @@
 import sys
-from .firefox_driver import FirefoxController
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from .playwright_driver import PlaywrightController
 from PIL import Image
 from .success import Success
-from selenium.webdriver.common.action_chains import ActionChains
 import time
 import os
 from driver.success import getStatus
@@ -54,25 +50,25 @@ class Wx:
     def extract_token_from_requests(self):
         """从页面中提取token"""
         try:
-            driver=self.controller.driver
+            page = self.controller.page
             # 尝试从当前URL获取token
-            current_url = driver.current_url
+            current_url = page.url
             token_match = re.search(r'token=([^&]+)', current_url)
             if token_match:
                 return token_match.group(1)
             
             # 尝试从localStorage获取
-            token = driver.execute_script("return localStorage.getItem('token');")
+            token = page.evaluate("() => localStorage.getItem('token')")
             if token:
                 return token
                 
             # 尝试从sessionStorage获取
-            token = driver.execute_script("return sessionStorage.getItem('token');")
+            token = page.evaluate("() => sessionStorage.getItem('token')")
             if token:
                 return token
                 
             # 尝试从cookie获取
-            cookies = driver.get_cookies()
+            cookies = page.context.cookies()
             for cookie in cookies:
                 if 'token' in cookie['name'].lower():
                     return cookie['value']
@@ -101,7 +97,7 @@ class Wx:
     wait_time=1
     def QRcode(self):
         return {
-            "code":f"{self.wx_login_url}?t={(time.time())}",
+            "code":f"/{self.wx_login_url}?t={(time.time())}",
             "is_exists":self.GetHasCode(),
         }
     def refresh_task(self):
@@ -133,7 +129,7 @@ class Wx:
             if getStatus()==False:
                 return
             if 'controller' not in locals():
-                controller = FirefoxController()
+                controller = PlaywrightController()
                 self.controller=controller
             from driver.token import wx_cfg
             token=str(wx_cfg.get("token", ""))
@@ -143,9 +139,8 @@ class Wx:
             self.controller.add_cookies(cookie)
             self.controller.add_cookie({"name":"token","value":token})
 
-            qrcode = controller.driver.find_element(By.ID, "jumpUrl")
-            wait = WebDriverWait(controller.driver, self.wait_time)
-            wait.until(EC.visibility_of(qrcode))
+            qrcode = self.controller.page.locator("#jumpUrl")
+            qrcode.wait_for(state="visible", timeout=self.wait_time*1000)
             qrcode.click()
             time.sleep(2)
             self.Call_Success()
@@ -185,7 +180,7 @@ class Wx:
             self.Clean()
             self.Close()
             # 初始化浏览器控制器
-            controller = FirefoxController()
+            controller = PlaywrightController()
             self.controller=controller
             # 启动浏览器并打开微信公众平台
             print("正在启动浏览器...")
@@ -194,37 +189,22 @@ class Wx:
             
             # 等待页面完全加载
             print("正在加载登录页面...")
-              # 等待登录后首页完全加载
-            wait = WebDriverWait(controller.driver, self.wait_time)
-              # 然后等待其中的图片加载完成
-            wait.until(lambda d: d.execute_script(
-                "return document.querySelector('img').complete"))
+            # 等待登录后首页完全加载
+            self.controller.page.wait_for_load_state("networkidle")
             time.sleep(2)
             
-            # 滚动到二维码区域
-            qrcode = controller.driver.find_element(By.CLASS_NAME, "login__type__container__scan__qrcode")
-            ActionChains(controller.driver).move_to_element(qrcode).perform()
+            # 定位二维码区域
+            qrcode = self.controller.page.locator(".login__type__container__scan__qrcode")
             # 确保二维码可见
-            wait.until(EC.visibility_of(qrcode))
-            # 全屏截图并裁剪二维码区域
-            code_src=qrcode.get_attribute("src")
+            qrcode.wait_for(state="visible", timeout=self.wait_time*1000)
+            
+            # 获取二维码图片URL
+            code_src = qrcode.get_attribute("src")
             print("正在生成二维码图片...")
             print(f"code_src:{code_src}")
-            controller.driver.save_screenshot("temp_screenshot.png")
-            img = Image.open("temp_screenshot.png")
             
-            # 获取二维码位置和尺寸
-            location = qrcode.location
-            size = qrcode.size
-            left = location['x']
-            top = location['y']
-            right = location['x'] + size['width']
-            bottom = location['y'] + size['height']
-            
-            # 裁剪并保存二维码
-            img = img.crop((left, top, right, bottom))
-            img.save(self.wx_login_url)
-            os.remove("temp_screenshot.png")
+            # 使用Playwright截图功能
+            qrcode.screenshot(path=self.wx_login_url)
             
             print("二维码已保存为 wx_qrcode.png，请扫码登录...")
             self.HasCode=True
@@ -234,8 +214,8 @@ class Wx:
             print("等待扫码登录...")
             if self.Notice is not None:
                 self.Notice()
-            wait = WebDriverWait(controller.driver, 120)
-            wait.until(EC.url_contains(self.WX_HOME))
+            # 等待页面跳转到首页
+            self.controller.page.wait_for_url(f"{self.WX_HOME}*", timeout=120000)
             print("登录成功，正在获取cookie和token...")
             from .success import setStatus
             with self._login_lock:
@@ -350,8 +330,8 @@ class Wx:
     def expire_all_cookies(self):
         """设置所有cookie为过期状态"""
         try:
-            if hasattr(self, 'controller') and hasattr(self.controller, 'driver'):
-                self.controller.driver.delete_all_cookies()
+            if hasattr(self, 'controller') and hasattr(self.controller, 'context'):
+                self.controller.context.clear_cookies()
                 return True
             else:
                 print("浏览器未启动，无法操作cookie")
@@ -383,4 +363,7 @@ class Wx:
 def DoSuccess(cookies:any) -> dict:
     data=WX_API.format_token(cookies)
     Success(data)
+
 WX_API = Wx()
+def GetCode(CallBack:any=None,NeedExit=True):
+    WX_API.GetCode(CallBack,NeedExit=NeedExit)

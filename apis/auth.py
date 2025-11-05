@@ -9,7 +9,7 @@ from core.auth import (
 )
 from .ver import API_VERSION
 from .base import success_response, error_response
-from driver.wx import WX_API
+from driver.base import WX_API
 from core.config import set_config, cfg
 router = APIRouter(prefix=f"/auth", tags=["认证"])
 from driver.success import Success

@@ -1,3 +1,4 @@
+from os import remove
 from driver.wxarticle import Web
 from driver.success import Success
 from driver.wx import WX_API
@@ -9,11 +10,12 @@ import re
 
 def testWeb():
     urls="""
+    https://mp.weixin.qq.com/s/puc5q9xFmfMSy3OyqeYxZA
     """.strip().split("\n")
 
-    Web.FixArticle(mp_id="MP_WXS_3009671561",urls=urls)
+    Web.FixArticle(urls=urls)
     pass
- 
+
 def testWx_Api():
       # 测试代码
     def login_success_callback(session_data, account_info):
@@ -24,12 +26,18 @@ def testWx_Api():
     def notice_callback(message):
         print(f"通知: {message}")
     
-    from driver.wx_api import get_qr_code,login_with_token
+    from driver.wx_api import WeChat_api 
     # 保持程序运行以等待登录
     # 使用token登录
-    login_with_token(login_success_callback)
+    haLogin=WeChat_api.login_with_token()
+    if haLogin:
+        print("已登录")
+    else:
+        print("未登录")
+
     # 获取二维码
-    result = get_qr_code(login_success_callback, notice_callback)
+    # result = get_qr_code(login_success_callback, notice_callback)
+    result=WeChat_api.GetCode(login_success_callback, notice_callback)
     # print(f"二维码结果: {result}")
 
 
@@ -71,12 +79,30 @@ def testNotice():
 """
     sys_notice(text,"测试通知","测试通知","测试通知")
 
+def test_fetch_articles_without_content():
+    from jobs.fetch_no_article import fetch_articles_without_content,start_sync_content
+    fetch_articles_without_content()
+    start_sync_content()
+    input("按任意键退出")
+def test_Gather_Article():
+    from core.wx.base import WxGather
+    ga=WxGather().Model("web")
+    urls=[
+        # "https://mp.weixin.qq.com/s/puc5q9xFmfMSy3OyqeYxZA",
+          "https://mp.weixin.qq.com/s/r8AgtesEVSnV-QpEbpb8-Q",
+          "https://mp.weixin.qq.com/s?__biz=MzI3MTQzNjYxNw==&mid=2247912631&idx=1&sn=6a60ca17a85b2aac8c1236c9df8cbe36&scene=21&poc_token=HNMGC2mj1itdGEMeEq01KxIvG5QUmsY-ZUxsdewX"
+        ]
+    for url in urls:
+        content=ga.content_extract(url)
+        print(content)
 
 if __name__=="__main__":
     # testLogin()
-    # testWeb()
+    test_Gather_Article()
+    # test_fetch_articles_without_content()
+    testWeb()
     # testNotice()
-    testWx_Api()
+    # testWx_Api()
     # testMd2Doc()
     # testToken()
     # testMarkDown()

@@ -29,8 +29,8 @@ def set_token(data:any,ext_data:any=None):
     sys_notice(f"""WeRss授权成功
 - Token: {data.get("token")}
 - Expiry: {data.get("expiry")['expiry_time']}
-""", cfg.get("server.code_title","WeRss授权成功"))
+""", str(cfg.get("server.code_title","WeRss授权成功")))
 
 
-def get(key:str,default:any=None):
-    return wx_cfg.get(key, default)
+def get(key:str,default:str="")->str:
+    return str(wx_cfg.get(key, default))

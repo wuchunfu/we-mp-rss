@@ -13,6 +13,8 @@ from threading import Lock, Timer
 from PIL import Image
 import qrcode
 from io import BytesIO
+
+from sqlalchemy import true
 from .token import get as get_token,set_token
 import logging
 # 配置日志
@@ -35,7 +37,7 @@ class WeChatAPI:
         self.cookies_dict=[]
         self.cookies = {}
         self.qr_code_path = "static/wx_qrcode.png"
-        
+        self.wx_login_url=f"{self.qr_code_path}"
         # 线程安全
         self._lock = Lock()
         
@@ -381,7 +383,8 @@ class WeChatAPI:
                     
             except Exception as e:
                 logger.error(f"检查登录状态失败: {str(e)}")
-                self.notice_callback('检查登录状态失败,请重试')
+                if self.notice_callback:
+                    self.notice_callback('检查登录状态失败,请重试')
                 # Timer(5.0, check_login).start()  # 出错后延长检查间隔
         
         # 启动检查
@@ -565,7 +568,7 @@ class WeChatAPI:
         except Exception as e:
             logger.error(f"计算过期时间失败: {str(e)}")
             return None
-    def get_cookie_expires(self,cookies: any):
+    def get_cookie_expires(self,cookies: dict):
         try:
             cookie_info = []
             for cookie in cookies:
@@ -701,7 +704,7 @@ class WeChatAPI:
         except Exception as e:
             logger.error(f"清理二维码文件失败: {str(e)}")
 
-    def login_with_token(self, token: str, cookies: Optional[Dict[str, str]] = None) -> bool:
+    def login_with_token(self, token: str="", cookies: Optional[Dict[str, str]] = None) -> bool:
         """
         使用token登录
         
@@ -714,6 +717,10 @@ class WeChatAPI:
         """
         try:
             with self._lock:
+
+                token=token or get_token("token")
+                cookies=cookies or self._cookie_string_to_dict(get_token("cookie"))
+                print(f"token: {token}")
                 self.token = token
                 
                 if cookies:
@@ -786,6 +793,26 @@ class WeChatAPI:
         }
 
 
+
+    def GetCode(self,CallBack=None,Notice=None):
+        from core.print import print_warning
+        from core.thread import ThreadManager
+        self.thread = ThreadManager(target=self.get_qr_code,args=(CallBack,Notice))  # 传入函数名
+        self.thread.start()  # 启动线程
+        print("微信公众平台登录 v1.34")
+        return {
+            "code":f"/{self.wx_login_url}?t={(time.time())}",
+            "is_exists":self.GetHasCode(),
+        }
+    def GetHasCode(self):
+        if os.path.exists(self.wx_login_url):
+            return True
+        return False
+    
+    def HasLogin(self):
+        return self.login_with_token()
+    def Close(self):
+        pass
 # 创建全局实例
 WeChat_api = WeChatAPI()
 
@@ -805,10 +832,7 @@ def get_qr_code(callback: Optional[Callable] = None, notice: Optional[Callable] 
 
 
 
-def _cookie_string_to_dict(cookie_string: str) -> Dict[str, str]:
-    return WeChat_api._cookie_string_to_dict(cookie_string)
-
-def login_with_token(login_callback: Optional[Callable] = None) -> bool:
+def login_with_token(token:str="",cookies:Optional[Dict[str, str]]=None,login_callback: Optional[Callable] = None) -> bool:
     """
     使用token登录（全局函数）
     
@@ -819,12 +843,8 @@ def login_with_token(login_callback: Optional[Callable] = None) -> bool:
     Returns:
         是否登录成功
     """
-    token=get_token("token")
-    cookies=get_token("cookie")
-    cookies=_cookie_string_to_dict(cookies)
+   
     
-    print(f"token: {token}")
-    # print(f"cookies: {cookies}")
     WeChat_api.login_callback=login_callback
     return WeChat_api.login_with_token(token, cookies)
 
@@ -862,7 +882,7 @@ if __name__ == "__main__":
     # 保持程序运行以等待登录
     try:
          # 获取二维码
-        result = get_qr_code(login_success_callback, notice_callback)
+        result = WeChat_api.get_qr_code(login_success_callback, notice_callback)
         print(f"二维码结果: {result}")
         # while True:
         #     time.sleep(1)
