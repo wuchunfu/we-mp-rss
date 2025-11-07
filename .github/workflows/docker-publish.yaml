@@ -6,7 +6,8 @@ on:
     branches:
       - main
     paths:  # 仅在指定文件变化时触发（可选）
-      # - 'ReadMe.md'
+      - 'ReadMe.md'
+      - 'README.zh-CN.md'
       - 'core/ver.py'
 #   release:
 #     types: [published]
