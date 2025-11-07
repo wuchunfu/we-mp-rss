@@ -7,7 +7,7 @@ import json
 import random
 import uuid
 #指定浏览器类型
-browsers_name=os.getenv("BROWSER_TYPE","webkit")
+browsers_name=os.getenv("BROWSER_TYPE","firefox")
 class PlaywrightController:
     def __init__(self):
         
