@@ -10,8 +10,9 @@ import uuid
 from apis import user
 #指定浏览器类型
 browsers_name=os.getenv("BROWSER_TYPE","firefox")
-browsers_path = os.getenv("PLAYWRIGHT_BROWSERS_PATH","./data/driver/")
+browsers_path = os.getenv("PLAYWRIGHT_BROWSERS_PATH","")
 os.environ['PLAYWRIGHT_BROWSERS_PATH']=browsers_path
+from playwright.sync_api import sync_playwright
 class PlaywrightController:
     def __init__(self):
         
@@ -34,40 +35,22 @@ class PlaywrightController:
             return False
         except Exception:
             return False
-    def _install_brower(self,browser_name=browsers_name):
-         # 检查浏览器是否已安装
-        if self._is_browser_installed(browser_name):
-            print(f"{browser_name} 浏览器已安装，无需安装")
-            return True
-        print(f"{browser_name} 浏览器未安装，开始安装...")
-        # 检查是否设置了自定义浏览器安装路径
-        if browsers_path:
-            print(f"使用自定义浏览器安装路径: {browsers_path}")
-            subprocess.check_call([sys.executable, "-m", "playwright", "install",f"{browser_name}", "--with-deps"], env={**os.environ, "PLAYWRIGHT_BROWSERS_PATH": browsers_path})
-        else:
-            subprocess.check_call([sys.executable, "-m", "playwright", "install",f"{browser_name}", "--with-deps"])
-        print(f"{browser_name} 浏览器安装完成")
-        return True
-    def install(self,browser_name=browsers_name):
-        try:
-            from playwright.sync_api import sync_playwright
-            self._install_brower(browser_name=browsers_name)
-            return sync_playwright()
-        except ImportError:
-            print("检测到playwright未安装，正在自动安装...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
-             # 如果上面安装playwright失败，这里重新安装
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright"])
-        from playwright.sync_api import sync_playwright
-        return sync_playwright()
-    
     
     def start_browser(self, headless=True, mobile_mode=False, dis_image=False, browser_name=browsers_name, language="zh-CN", anti_crawler=True):
         try:
             if  bool(os.getenv("NOT_HEADLESS",False)):
                 headless = False
             if self.driver is None:
-                self.driver = self.install().start()
+                # 修复所有操作系统下的异步子进程问题
+                import asyncio
+                # 设置合适的事件循环策略
+                if sys.platform == "win32":
+                    # Windows系统使用ProactorEventLoop
+                    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+                else:
+                    # Linux/Mac系统使用默认策略
+                    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+                self.driver = sync_playwright().start()
             
             # 根据浏览器名称选择浏览器类型
             if browser_name.lower() == "firefox":
@@ -210,7 +193,7 @@ class PlaywrightController:
         try:
             from playwright_stealth.stealth import Stealth
         except:
-            print("检测到playwright未安装，正在自动安装...")
+            print("检测到playwright_stealth未安装，正在自动安装...")
             subprocess.check_call([sys.executable, "-m", "pip", "install", "playwright_stealth"])
         
         stealth = Stealth()

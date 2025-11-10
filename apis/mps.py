@@ -1,3 +1,4 @@
+from logging import info
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.background import BackgroundTasks
@@ -167,13 +168,14 @@ async def get_mp(
             )
         )
 @router.post("/by_article", summary="通过文章链接获取公众号详情")
-async def get_mp_by_article(
+def get_mp_by_article(
     url: str=Query(..., min_length=1),
     current_user: dict = Depends(get_current_user)
 ):
     try:
         from driver.wxarticle import Web
-        info=Web.get_article_content(url)
+        info =Web.get_article_content(url)
+        
         if not info:
             raise HTTPException(
                 status_code=status.HTTP_201_CREATED,
